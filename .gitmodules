@@ -1,0 +1,3 @@
+[submodule "lib/ili9341"]
+	path = lib/ili9341
+	url = https://github.com/pahasara2003/luckfox_tft_ili9341
