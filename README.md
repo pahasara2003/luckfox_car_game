@@ -4,7 +4,17 @@ A textured 3D rally game for the Luckfox Pico Mini B and an ILI9341 display, bui
 
 Clone with `git clone --recurse-submodules`.
 
-Race five AI cars over 3 laps on gravel or asphalt through rolling hills, patchwork wheat and ploughed fields, a village of gabled houses, tower blocks on the east straight, and a steel truss bridge over a river that drains a lake beside the start straight. Pine and broadleaf trees, boulders and red-topped roadside posts line the way, with snowy mountain ranges behind and flags lining the start gantry. Six distinct car models fill the staggered grid, with varied racing lines, corner speeds and top speeds. The road climbs and dips (up to a 14% grade): cars tilt with the slope, slow down uphill and speed up downhill. Rows of spinning gold coins weave across the road, and blue nitrous tanks sit between them. Every coin and tank comes back when you start a new lap. The HUD shows lap, race time, best lap, position, coins, the nitrous gauge, speed and a minimap. Leaving the road slows you down; trees and other cars get in your way. You drive with your PC's keyboard over the USB `adb` link.
+Race five AI cars over 3 laps, driving with your PC's keyboard over the USB `adb` link.
+
+## Features
+
+- **A living landscape:** rolling hills coloured by height and slope, from lush valleys to dry hilltops and rocky slopes. There's a lake beside the start straight and a river under a red steel truss bridge.
+- **Buildings:** a village of houses, each with its own size, storeys, and brick, plank, stone or plaster walls under tiled roofs. Tower blocks stand on the east straight. At night their windows light up and porch lamps glow.
+- **Coins and nitrous:** short rows of glowing gold coins and blue nitrous tanks. They all come back each lap.
+- **Conditions:** night, morning, day or golden hour; sunny, rain or snow; gravel or asphalt. Each changes grip and the look of the world.
+- **Real handling:** a tyre model with drifting. Cars tilt and change speed on slopes (up to a 14% grade).
+- **Six cars:** six distinct models, each AI with its own line, corner speed and top speed.
+- **HUD:** lap, race time, best lap, position, coins, nitrous gauge, speed and a minimap.
 
 ## Build and play
 
@@ -56,11 +66,13 @@ Use `night`, `morning`, `day` or `evening` for time, `sunny`, `rain` or `snow` f
 
 ## Performance
 
-On the Pico Mini B (single Cortex-A7, 1.1 GHz), the previous board benchmark measured about 24 fps before the roadside scenery and sky update. A frame took about 22 ms to render on its own (`cargame bench`), and about 28 ms while the display thread shared the CPU core. Frames are sent on a second thread while the next one renders.
+On the Pico Mini B (single Cortex-A7, 1.1 GHz), `cargame bench 200` measures about 35 ms per frame by day and 47 ms at night. That's rendering alone, without the display. The game runs at roughly 20 fps by day and less at night. Frames are sent to the display on a second thread while the next one renders.
 
-On the development PC (Intel Core i5-1235U), `cargame bench 600` (pinned to one core with `taskset`) measured about 6.6 ms per frame in sunny daylight and 8.4 ms at night, with headlights. These timings cover simulation and rendering without the SPI display. The scenery, coins and nitrous added about 10% to the frame time on the PC; the board has not been measured since. The buildings, bridge and water are built in code from a few hundred flat-coloured triangles, because Kenney's ready-made houses are 1,500 to 4,000 triangles each. That's too many for the single Cortex-A7.
+On the development PC (Intel Core i5-1235U), `cargame bench 600` (pinned to one core with `taskset`) measures about 7 ms per frame by day and 9 ms at night.
 
-The 24 fps needs the `pushImage` change in `lib/ili9341` that packs pixels into 4 KB SPI writes. With the original one-write-per-row code the game runs at about 17 fps.
+The buildings, bridge and water are built in code from a few hundred flat-coloured triangles. Kenney's ready-made houses are 1,500 to 4,000 triangles each, which is too many for the single Cortex-A7.
+
+Full speed needs the `pushImage` change in `lib/ili9341` that packs pixels into 4 KB SPI writes. With the original one-write-per-row code the game runs at about 17 fps.
 
 ## Credits
 
