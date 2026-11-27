@@ -6,6 +6,20 @@ Clone with `git clone --recurse-submodules`.
 
 Race five AI cars over 3 laps, driving with your PC's keyboard over the USB `adb` link.
 
+## Screenshots
+
+These are 320×240 frames rendered by the host simulation (`./cargame ppm`), shown at 2× size. They're the same pixels the game sends to the panel.
+
+| Day: the village by the start straight | Golden hour: over the truss bridge |
+| --- | --- |
+| ![Day](docs/screenshots/day.png) | ![Golden hour](docs/screenshots/golden-hour.png) |
+| **Morning:** through the village | **Night:** lit windows and porch lamps |
+| ![Morning](docs/screenshots/morning.png) | ![Night](docs/screenshots/night.png) |
+| **Rain:** a glowing nitrous tank ahead | **Snow on asphalt** |
+| ![Rain](docs/screenshots/rain.png) | ![Snow](docs/screenshots/snow.png) |
+| **Nitrous:** flames off the start line | |
+| ![Nitrous](docs/screenshots/nitrous.png) | |
+
 ## Features
 
 - **A living landscape:** rolling hills coloured by height and slope, from lush valleys to dry hilltops and rocky slopes. There's a lake beside the start straight and a river under a red steel truss bridge.
