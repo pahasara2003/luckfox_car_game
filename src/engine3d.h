@@ -23,6 +23,7 @@ inline uint16_t rgb565(int r, int g, int b) { return uint16_t((r >> 3) << 11 | (
 // RGB565 texture; width and height must be powers of two (sampling wraps with a bit mask).
 struct Texture {
     int w = 0, h = 0, shift = 0;
+    float reflect = 1;                                 // spot-light gain: >1 for retroreflective paint
     std::vector<uint16_t> px;
     Texture(int w_, int h_) : w(w_), h(h_), px(size_t(w_) * h_) {
         if (w < 1 || h < 1 || (w & (w - 1)) || (h & (h - 1))) throw std::runtime_error("texture size must be a power of two");
@@ -37,6 +38,8 @@ struct Mesh {
     std::vector<Vec3> v;
     std::vector<Tri> t;
     bool rim = true;                                   // rim=false for ground planes seen at grazing angles
+    float reflect = 1;                                 // spot-light gain for untextured faces
+    std::vector<Vec3> tint;                            // optional, one per vertex: colour multiplier for textured faces
     std::vector<std::shared_ptr<Texture>> textures;    // keeps textures referenced by t alive
 };
 
@@ -71,7 +74,7 @@ inline void append(Mesh& dst, const Mesh& src, Vec3 offset) {
 }
 
 // Coloured cone light: full strength inside cosInner, fading to zero at cosOuter.
-struct SpotLight { Vec3 pos{0, 3, 0}; Vec3 dir{0, -1, 0}; float cosInner = 0.95f, cosOuter = 0.85f, intensity = 1.2f; Vec3 color{1, 1, 1}; };
+struct SpotLight { Vec3 pos{0, 3, 0}; Vec3 dir{0, -1, 0}; float cosInner = 0.95f, cosOuter = 0.85f, intensity = 1.2f; Vec3 color{1, 1, 1}; float range = 0; };   // range 0: no falloff
 // Backlight rim: brightens faces seen edge-on that also face the light at `pos`.
 struct RimLight { Vec3 pos{0, 2, 5}; Vec3 color{0.5f, 0.7f, 1}; float strength = 0; };
 
@@ -139,8 +142,10 @@ public:
             Vec3 a = world_[t.a], b = world_[t.b], c = world_[t.c];
             Vec3 n = normalize(cross(b - a, c - a));
             if (dot(n, a - cam) >= 0) continue;                                    // back-face cull
-            Face f{n, t.color, t.tex, ambient + sun * std::max(0.f, dot(n, light)), m.rim};
-            V in[3] = {{va, a, t.uv[0]}, {vb, b, t.uv[1]}, {vc, c, t.uv[2]}};
+            bool tinted = t.tex && !m.tint.empty();
+            Face f{n, t.color, t.tex, ambient + sun * std::max(0.f, dot(n, light)), m.rim, t.tex ? t.tex->reflect : m.reflect, tinted};
+            const Vec3 one{1, 1, 1};
+            V in[3] = {{va, a, t.uv[0], tinted ? m.tint[t.a] : one}, {vb, b, t.uv[1], tinted ? m.tint[t.b] : one}, {vc, c, t.uv[2], tinted ? m.tint[t.c] : one}};
             if (va.z >= nearZ && vb.z >= nearZ && vc.z >= nearZ) { raster(in[0], in[1], in[2], f); continue; }
             V out[4];                                                              // clip against z = nearZ
             int k = 0;
@@ -168,13 +173,14 @@ public:
     }
 
 private:
-    struct V { Vec3 p, w; Vec2 uv; };   // view-space position, world position, texture coordinate
-    struct Face { Vec3 n; uint16_t color; const Texture* tex; float light; bool rim; };
+    struct V { Vec3 p, w; Vec2 uv; Vec3 tint; };   // view-space position, world position, texture coordinate, colour
+    struct Face { Vec3 n; uint16_t color; const Texture* tex; float light; bool rim; float reflect; bool tinted; };
     float cy_ = 1, sy_ = 0, cp_ = 1, sp_ = 0;
     std::vector<Vec3> world_, view_;
 
     static V lerp(const V& a, const V& b, float t) {
-        return {a.p + (b.p - a.p) * t, a.w + (b.w - a.w) * t, {a.uv.u + (b.uv.u - a.uv.u) * t, a.uv.v + (b.uv.v - a.uv.v) * t}};
+        return {a.p + (b.p - a.p) * t, a.w + (b.w - a.w) * t, {a.uv.u + (b.uv.u - a.uv.u) * t, a.uv.v + (b.uv.v - a.uv.v) * t},
+                a.tint + (b.tint - a.tint) * t};
     }
 
     void raster(const V& A, const V& B, const V& C, const Face& f) {
@@ -195,10 +201,20 @@ private:
         float u0 = A.uv.u * tw * iz0, u1 = B.uv.u * tw * iz1, u2 = C.uv.u * tw * iz2;
         float v0 = A.uv.v * th * iz0, v1 = B.uv.v * th * iz1, v2 = C.uv.v * th * iz2;
         Vec3 p0 = A.w * iz0, p1 = B.w * iz1, p2 = C.w * iz2;
-        bool lit = !spots.empty() || (f.rim && rim.strength > 0);
+        bool lit = f.rim && rim.strength > 0;
+        if (!lit && !spots.empty()) {                           // skip per-pixel lighting for triangles no beam can reach
+            Vec3 mid = (A.w + B.w + C.w) * (1.f / 3);
+            float rad = std::sqrt(std::max(dot(A.w - mid, A.w - mid), std::max(dot(B.w - mid, B.w - mid), dot(C.w - mid, C.w - mid))));
+            for (auto& sp : spots) {
+                Vec3 d = sp.pos - mid;
+                if (sp.range <= 0 || dot(d, d) < (sp.range + rad) * (sp.range + rad)) { lit = true; break; }
+            }
+        }
         bool fog = fogEnd > fogStart;
         float fogInv = fog ? 1 / (fogEnd - fogStart) : 0;
         int s256 = std::min(511, int(f.light * 256));
+        // tint times light, in 1/256ths; interpolated without perspective (colour varies slowly)
+        Vec3 k0 = A.tint * (f.light * 256), k1 = B.tint * (f.light * 256), k2 = C.tint * (f.light * 256);
         uint16_t flat = scale(f.color, f.light);
         int tmaskx = tex ? tex->w - 1 : 0, tmasky = tex ? tex->h - 1 : 0, tshift = tex ? tex->shift : 0;
         const uint16_t* tpx = tex ? tex->px.data() : nullptr;
@@ -223,7 +239,11 @@ private:
                     int tu = int((w0 * u0 + w1 * u1 + w2 * u2) * z + 65536.f) & tmaskx;   // offset keeps negatives wrapping
                     int tv = int((w0 * v0 + w1 * v1 + w2 * v2) * z + 65536.f) & tmasky;
                     uint16_t t = tpx[(tv << tshift) | tu];
-                    int r = std::min(31, ((t >> 11) * s256) >> 8), g = std::min(63, (((t >> 5) & 63) * s256) >> 8), b = std::min(31, ((t & 31) * s256) >> 8);
+                    int sr = s256, sg = s256, sb = s256;
+                    if (f.tinted) {
+                        sr = int(w0 * k0.x + w1 * k1.x + w2 * k2.x); sg = int(w0 * k0.y + w1 * k1.y + w2 * k2.y); sb = int(w0 * k0.z + w1 * k1.z + w2 * k2.z);
+                    }
+                    int r = std::min(31, ((t >> 11) * sr) >> 8), g = std::min(63, (((t >> 5) & 63) * sg) >> 8), b = std::min(31, ((t & 31) * sb) >> 8);
                     c = uint16_t(r << 11 | g << 5 | b);
                 }
                 if (lit) c = lights(tex ? c : f.color, tex ? 1.f : f.light, f, (p0 * w0 + p1 * w1 + p2 * w2) * z);
@@ -237,11 +257,18 @@ private:
     uint16_t lights(uint16_t base, float flat, const Face& f, Vec3 p) const {
         float fr = flat, fg = flat, fb = flat, ar = 0, ag = 0, ab = 0;
         for (auto& sp : spots) {
-            Vec3 L = normalize(sp.pos - p);
-            float cd = -dot(L, sp.dir), ndl = dot(f.n, L);
-            if (cd <= sp.cosOuter || ndl <= 0) continue;
+            Vec3 d = sp.pos - p;
+            float dd = dot(d, d), fall = 1;
+            if (sp.range > 0) {                                    // cheap reject before the normalize
+                if (dd >= sp.range * sp.range) continue;
+                fall = 1 - dd / (sp.range * sp.range);
+            }
+            float along = -dot(d, sp.dir);                         // outside the cone or facing away: no sqrt needed
+            if (along <= 0 || along * along <= sp.cosOuter * sp.cosOuter * dd || dot(f.n, d) <= 0) continue;
+            float inv = 1 / std::sqrt(dd);
+            float cd = along * inv, ndl = dot(f.n, d) * inv;
             float t = std::min(1.f, (cd - sp.cosOuter) / (sp.cosInner - sp.cosOuter));
-            float k = sp.intensity * ndl * t * t * (3 - 2 * t);
+            float k = sp.intensity * f.reflect * fall * ndl * t * t * (3 - 2 * t);
             fr += k * sp.color.x; fg += k * sp.color.y; fb += k * sp.color.z;
         }
         if (f.rim && rim.strength > 0) {

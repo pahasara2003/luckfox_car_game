@@ -65,6 +65,10 @@ int main() {
         q.clear(0); q.draw(box(4, 4, 1, 0xFFFF, &tex), Transform());
         assert(q.color[20 * 64 + 20] == 0xF800 && q.color[20 * 64 + 44] == 0x07E0);
         assert(q.color[44 * 64 + 20] == 0x001F && q.color[44 * 64 + 44] == 0xFFFF);
+        Mesh tinted = box(4, 4, 1, 0xFFFF, &tex);                 // per-vertex tint multiplies the texture: white texel turns half red
+        tinted.tint.assign(tinted.v.size(), Vec3{0.5f, 0, 0});
+        q.clear(0); q.draw(tinted, Transform());
+        assert(q.color[44 * 64 + 44] == rgb565(123, 0, 0) || q.color[44 * 64 + 44] == uint16_t(15 << 11));
         bool threw = false;
         try { Texture bad(3, 2); } catch (const std::runtime_error&) { threw = true; }
         assert(threw);
@@ -112,6 +116,29 @@ int main() {
 
     // game: the track closes on itself with even spacing
     Race race;
+    {   // road choice and weather have a predictable grip order
+        Race grip;
+        float lastAsphalt = 4, lastGravel = 4;
+        for (Weather weather : {Weather::Sunny, Weather::Rain, Weather::Snow}) {
+            grip.weather = weather;
+            grip.surface = RoadSurface::Asphalt;
+            float asphalt = grip.roadGrip();
+            grip.surface = RoadSurface::Gravel;
+            float gravel = grip.roadGrip();
+            assert(asphalt > gravel && asphalt < lastAsphalt && gravel < lastGravel);
+            lastAsphalt = asphalt;
+            lastGravel = gravel;
+        }
+        Car moving;
+        moving.pos = {0, 0, 1};
+        moving.idx = grip.track.nearest(moving.pos, 0, -1);
+        moving.speed = 20;
+        grip.settle(moving);
+        float gravelHeight = moving.pos.y;
+        grip.surface = RoadSurface::Asphalt;
+        grip.settle(moving);
+        assert(gravelHeight == moving.pos.y);
+    }
     const Track& tr = race.track;
     assert(tr.n() > 150);
     for (int i = 0; i < tr.n(); ++i) {
@@ -123,27 +150,53 @@ int main() {
     Vec3 start = race.cars[0].pos;
     Input go; go.up = true;
     for (int i = 0; i < 80; ++i) race.step(1 / 30.f, go);
-    assert(race.time < 0 && length(race.cars[0].pos - start) == 0 && race.position(0) == 3);
+    assert(race.time < 0 && length(race.cars[0].pos - start) == 0 && race.position(0) == int(race.cars.size()));
     // throttle on the start straight: speeds up along the road, stays on the tarmac
+    race.cars.resize(1);
     for (int i = 0; i < 20 + 90; ++i) race.step(1 / 30.f, go);
     assert(race.cars[0].speed > 25 && !race.cars[0].offroad && race.cars[0].lapsDone == 0);
+    {   // drift: holding a steer key at full speed (drift starts after 0.3 s) slides the car round a hairpin; letting go straightens it
+        Race flat;
+        Car c; c.speed = 36;
+        Input hold; hold.right = true; hold.up = true;
+        float travelled = 0, turned = 0, slip = 0;
+        while (turned < kPi / 2 && travelled < 100) {
+            float before = c.yaw + std::atan2(c.vy, c.speed);
+            Vec3 p = c.pos;
+            flat.drive(c, hold, 1 / 24.f);
+            c.pitch = 0;
+            turned += wrapAngle(c.yaw + std::atan2(c.vy, c.speed) - before);
+            travelled += length(c.pos - p);
+            slip = std::max(slip, std::fabs(std::atan2(c.vy, c.speed)));
+        }
+        Input go; go.up = true;
+        for (int i = 0; i < 24; ++i) { flat.drive(c, go, 1 / 24.f); c.pitch = 0; }
+        std::printf("drift: 90 deg in %.0f units, up to %.0f deg sideways; after letting go yaw %.2f\n", travelled, slip * 57.3f, c.yawRate);
+        assert(travelled < 60 && std::fabs(c.yawRate) < 0.1f && std::fabs(c.vy) < 0.5f);
+    }
     // full race on autopilot: every car finishes 3 laps, mostly on the road, in a plausible time
     Race auto_race;
-    auto_race.cars[0].ai = true;
-    std::vector<int> off(3, 0);
-    int steps = 0;
-    for (; steps < 30 * 400; ++steps) {
-        auto_race.step(1 / 30.f, Input());
-        for (int i = 0; i < 3; ++i) off[i] += auto_race.cars[i].offroad;
-        bool all = true;
-        for (auto& c : auto_race.cars) all = all && c.finishTime >= 0;
-        if (all) break;
-    }
-    for (int i = 0; i < 3; ++i) {
-        const Car& c = auto_race.cars[i];
-        std::printf("car %d: finish %.1fs best lap %.1fs offroad %.1f%%\n", i, c.finishTime, c.bestLap, 100.f * off[i] / steps);
-        assert(c.finishTime > 30 && c.lapsDone == 3 && c.bestLap > 10 && off[i] < steps / 20);
-    }
+    for (Weather weather : {Weather::Sunny, Weather::Rain, Weather::Snow})
+        for (RoadSurface surface : {RoadSurface::Gravel, RoadSurface::Asphalt}) {
+            auto_race.reset();
+            auto_race.weather = weather;
+            auto_race.surface = surface;
+            auto_race.cars[0].ai = true;
+            std::vector<int> off(auto_race.cars.size(), 0);
+            int steps = 0;
+            for (; steps < 30 * 400; ++steps) {
+                auto_race.step(1 / 30.f, Input());
+                for (size_t i = 0; i < auto_race.cars.size(); ++i) off[i] += auto_race.cars[i].offroad;
+                bool all = true;
+                for (auto& c : auto_race.cars) all = all && c.finishTime >= 0;
+                if (all) break;
+            }
+            for (size_t i = 0; i < auto_race.cars.size(); ++i) {
+                const Car& c = auto_race.cars[i];
+                std::printf("car %zu: finish %.1fs best lap %.1fs offroad %.1f%%\n", i, c.finishTime, c.bestLap, 100.f * off[i] / steps);
+                assert(c.finishTime > 30 && c.lapsDone == 3 && c.bestLap > 10 && off[i] < steps / 20);
+            }
+        }
     {   // terrain: the road follows `base` and no hill reaches into the road or onto the 5-unit ground mesh around it
         const Terrain& te = auto_race.terrain;
         float grade = 0, bank = 0, reach = tr.halfWidth + tr.kerb + 5 * 0.7072f * 2;   // road + verge + a mesh cell diagonal
@@ -152,9 +205,10 @@ int main() {
             grade = std::max(grade, std::fabs(Terrain::base(b.x, b.z) - Terrain::base(a.x, a.z)) / tr.spacing);
             Vec3 l = a - rt * (tr.halfWidth + tr.kerb), r2 = a + rt * (tr.halfWidth + tr.kerb);
             bank = std::max(bank, std::fabs(Terrain::base(l.x, l.z) - Terrain::base(r2.x, r2.z)) / (2 * (tr.halfWidth + tr.kerb)));
-            for (float s = -reach; s <= reach; s += 0.5f) {
+            for (float s = -reach; s <= reach; s += 0.5f) {   // beyond the verge only the river may cut lower
                 Vec3 p = a + rt * s;
-                assert(std::fabs(te.height(p.x, p.z) - Terrain::base(p.x, p.z)) < 1e-4f);
+                float dh = te.height(p.x, p.z) - Terrain::base(p.x, p.z);
+                assert(std::fabs(s) <= tr.halfWidth + tr.kerb ? std::fabs(dh) < 1e-4f : dh < 1e-4f);
             }
         }
         float lo = 1e9, hi = -1e9;
@@ -164,6 +218,107 @@ int main() {
         Car c = auto_race.cars[0];                     // cars sit on the ground and tilt nose-up when climbing
         assert(std::fabs(c.pos.y - te.height(c.pos.x, c.pos.z)) < 0.2f);
         for (auto& t : auto_race.trees) assert(std::fabs(t.y - te.height(t.x, t.z)) < 1e-4f);
+    }
+    {   // scenery: one bridge over the river, water below the road there, nothing standing on the road or in the water
+        const Terrain& te = race.terrain;
+        int crossings = 0;
+        for (int i = 0; i < tr.n(); ++i) {
+            bool in = Terrain::wet(tr.at(i).x, tr.at(i).z) > 0.999f, prev = Terrain::wet(tr.at(i - 1).x, tr.at(i - 1).z) > 0.999f;
+            crossings += in && !prev;
+        }
+        Vec3 b = tr.at(race.bridge);
+        assert(crossings == 1 && Terrain::waterLevel(b.x, b.z) < Terrain::base(b.x, b.z) - 0.5f);
+        Vec3 bank = b + tr.right(race.bridge) * 10.f;
+        assert(te.height(bank.x, bank.z) < Terrain::waterLevel(bank.x, bank.z));     // a river under the bridge
+        for (auto& k : race.blocks) {
+            int i = tr.nearest(k.pos, 0, -1);
+            assert(std::fabs(tr.offset(k.pos, i)) > tr.halfWidth + tr.kerb);
+            assert(k.kind == Block::Railing || Terrain::wet(k.pos.x, k.pos.z) == 0);
+        }
+        for (auto& t : race.trees) assert(Terrain::wet(t.x, t.z) == 0);
+        int coins = 0, tanks = 0;
+        for (auto& p : race.pickups) { coins += !p.nitro; tanks += p.nitro; }
+        assert(coins >= 15 && coins <= 24 && tanks >= 4);
+        std::printf("scenery: %zu buildings/railings, bridge at sample %d, %d coins, %d nitrous tanks\n", race.blocks.size(), race.bridge, coins, tanks);
+    }
+    {   // bridge railings keep a car that slides sideways on the bridge out of the river; houses are solid
+        Race br;
+        br.cars.resize(1);
+        br.time = 0;
+        Car& c = br.cars[0];
+        c.ai = true;
+        int i = br.bridge;
+        Vec3 d = tr.dir(i);
+        c.pos = tr.at(i); c.idx = i; c.yaw = std::atan2(d.x, d.z) - kPi / 2;    // nose towards the left railing
+        c.speed = 25;
+        for (int k = 0; k < 30; ++k) { Input none; br.drive(c, none, 1 / 30.f); br.step(0, none); }
+        assert(std::fabs(tr.offset(c.pos, c.idx)) < tr.halfWidth + tr.kerb);
+        for (const Block& b : br.blocks) {
+            if (b.kind != Block::House) continue;
+            c.pos = b.pos + Vec3{0.3f, 0, 0.2f};                               // dropped inside a house: pushed out of it
+            c.speed = c.vy = 0;
+            br.step(0, Input());
+            float lx = std::fabs(dot(c.pos - b.pos, Vec3{std::cos(b.yaw), 0, -std::sin(b.yaw)}));
+            float lz = std::fabs(dot(c.pos - b.pos, Vec3{std::sin(b.yaw), 0, std::cos(b.yaw)}));
+            assert(lx >= b.hx + kCarRadius - 1e-3f || lz >= b.hz + kCarRadius - 1e-3f);
+            break;
+        }
+    }
+    {   // pickups: driving through a coin row collects it; a tank refills nitrous; all return next lap
+        Race pk;
+        Car& c = pk.cars[0];
+        const Pickup coin = pk.pickups[0];
+        c.pos = coin.pos;
+        int lap = c.lapsDone;
+        pk.collect(c, lap);
+        assert(c.coins == 1 && pk.pickups[0].taken);
+        pk.collect(c, lap);
+        assert(c.coins == 1);                                   // only once
+        for (auto& p : pk.pickups) if (p.nitro) { c.pos = p.pos; break; }
+        float before = c.nitro;
+        pk.collect(c, lap);
+        assert(c.nitro > before);
+        c.lapsDone = lap + 1;
+        c.pos = {0, 0, 1e4f};
+        pk.collect(c, lap);
+        for (auto& p : pk.pickups) assert(!p.taken);
+    }
+    {   // nitrous like a player: cruise at top speed, hold the boost key, let go, still turns as before
+        Race flat;
+        auto run = [&](Car& c, Input in, float secs) {   // on the spot: flat ground, never reaching the map edge
+            for (int i = 0; i < int(secs * 24); ++i) { flat.drive(c, in, 1 / 24.f); c.pitch = 0; c.pos = {0, 0, 0}; }
+        };
+        Input go; go.up = true;
+        Car c; c.nitro = 1;
+        run(c, go, 8);
+        float cruise = c.speed;
+        Input boost = go; boost.nitro = true;
+        run(c, boost, 1);
+        float after1s = c.speed;
+        run(c, boost, 3);
+        assert(c.nitro == 0 && !c.boosting);
+        float peak = c.speed;
+        run(c, go, 3);
+        std::printf("nitrous: cruise %.0f, +1 s %.0f, peak %.0f, 3 s after %.0f km/h\n", cruise * 4, after1s * 4, peak * 4, c.speed * 4);
+        std::fflush(stdout);
+        assert(cruise > 36 && after1s > cruise + 3 && peak > cruise + 7 && c.speed < peak - 4 && c.speed > cruise - 1);
+        Car t1, t2; t1.speed = t2.speed = 30; t2.nitro = 1;     // a tap of steer turns the same with or without boost
+        Input steer = go; steer.right = true;
+        Input steerBoost = steer; steerBoost.nitro = true;
+        run(t1, steer, 0.25f); run(t2, steerBoost, 0.25f);
+        assert(t1.yaw > 0.1f && t2.yaw > 0.7f * t1.yaw);
+        run(t1, go, 0.5f); run(t2, go, 0.5f);
+        assert(std::fabs(t1.yawRate) < 0.3f && std::fabs(t2.yawRate) < 0.3f);   // and settles after release
+        for (int brakeTap = 0; brakeTap < 2; ++brakeTap) {     // tank runs dry above top speed, then a drift (and a brake tap)
+            Car d; d.nitro = 1;
+            run(d, go, 8); run(d, boost, 3.2f);
+            Input drift = go; drift.right = true;
+            Input tap = drift; tap.down = true;
+            run(d, drift, 0.6f);
+            if (brakeTap) { run(d, tap, 0.2f); run(d, drift, 0.2f); }
+            run(d, go, 0.5f);
+            assert(std::fabs(d.yawRate) < 0.3f && std::fabs(d.vy) < 1);
+        }
     }
     std::printf("track: %d samples, %.0f units\n", tr.n(), tr.n() * tr.spacing);
     std::puts("game ok");

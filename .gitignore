@@ -3,3 +3,4 @@ demo3d
 test3d
 cargame
 board/
+__pycache__/
