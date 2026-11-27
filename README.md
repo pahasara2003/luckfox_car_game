@@ -90,5 +90,7 @@ Full speed needs the `pushImage` change in `lib/ili9341` that packs pixels into 
 
 ## Credits
 
+Game by [pahasara2003](https://github.com/pahasara2003), built with help from Claude Code.
+
 Car models: sedan-sports, hatchback-sports, race, race-future, SUV and police from [Kenney](https://kenney.nl) Car Kit 3.1, CC0 (`assets/cars/LICENSE-Kenney-Car-Kit.txt`).
 HUD font: [Inter](https://rsms.me/inter/) by Rasmus Andersson, SIL Open Font License 1.1 (`assets/LICENSE-Inter.txt`).
