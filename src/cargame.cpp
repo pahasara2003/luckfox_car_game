@@ -279,12 +279,14 @@ struct World {
     Textures tx;
     std::vector<Mesh> ground;                     // terrain in 40x40 chunks, so chunks out of view are skipped
     std::vector<Vec3> groundAt;                   // chunk centres
-    Mesh road, gantry, pine[4], marker, flag[3], water, bridge, coin, tank, flame[2];
+    Mesh road, gantry, pine[4], marker, flag[3], water, bridge, coin, tank, flame[2], tunnelIn, tunnelOut;
     std::vector<Mesh> buildings;                  // one per race.blocks entry (railings stay empty)
     std::vector<Vec3> porch;                      // each house's porch lamp, in its block's frame (towers: none)
     std::vector<std::vector<Vec3>> windows;       // centres of each house's road-facing windows, in its block's frame
     std::vector<Transform> markersAt, flagsAt;
     Transform bridgeAt;
+    std::vector<Vec3> tunnelLamps;                // ceiling lamps
+    Vec3 tunnelMid{0, 0, 0};
     Mesh cars[6];
     Bounds carBounds[6];
     Transform gantryAt;
@@ -474,6 +476,61 @@ struct World {
             bridgeAt.yaw = std::atan2(d.x, d.z);
             bridgeAt.pitch = -std::atan2(Terrain::base(b.x, b.z) - Terrain::base(a.x, a.z), L);   // follows the road's slope
         }
+        {   // tunnel through a hill: an arched concrete liner, a grassy mound over it, a lit floor, built along the bend of the road
+            static const float arch[6][2] = {{6.8f, 0}, {6.8f, 2.6f}, {5.7f, 3.9f}, {3.8f, 4.8f}, {1.8f, 5.2f}, {0, 5.3f}};     // wall to crown
+            static const float hill[6][2] = {{12, -0.3f}, {10.6f, 2.2f}, {8.6f, 4.4f}, {6.0f, 6.2f}, {3, 7.3f}, {0, 7.8f}};
+            const int lo = race.tunnelLo, hi = race.tunnelHi, P = 11;
+            const uint16_t concrete[2] = {rgb565(172, 170, 162), rgb565(150, 148, 142)}, lip = rgb565(205, 202, 192);
+            auto ring = [&](int i, bool outer) {                                    // one cross-section, left wall to right wall
+                std::vector<Vec3> pts;
+                float f = outer ? smooth01(std::min(i - lo, hi - i) / 4.f) : 0;     // the mound melts into the hillside at both mouths
+                for (int j = 0; j < P; ++j) {
+                    int h = 5 - std::abs(j - 5);
+                    float sgn = j < 5 ? -1.f : 1.f, x = arch[h][0] + (hill[h][0] - arch[h][0]) * f, y = arch[h][1] + (hill[h][1] - arch[h][1]) * f;
+                    Vec3 c = tr.at(i) + tr.right(i) * (sgn * x);
+                    pts.push_back({c.x, Terrain::base(c.x, c.z) + 0.1f + y, c.z});
+                }
+                return pts;
+            };
+            const Vec2 none[4] = {};
+            for (int i = lo; i < hi; ++i) {
+                std::vector<Vec3> a = ring(i, false), b = ring(i + 1, false), oa = ring(i, true), ob = ring(i + 1, true);
+                Vec3 axis = tr.at(i) + Vec3{0, Terrain::base(tr.at(i).x, tr.at(i).z) + 2.6f, 0};
+                for (int j = 0; j + 1 < P; ++j) {
+                    Vec3 q[4] = {a[j], a[j + 1], b[j + 1], b[j]};
+                    addQuad(tunnelIn, q, none, nullptr, axis - (q[0] + q[2]) * 0.5f, concrete[i & 1]);
+                    Vec3 o[4] = {oa[j], oa[j + 1], ob[j + 1], ob[j]};
+                    Vec2 uv[4] = {{o[0].x / 6, o[0].z / 6}, {o[1].x / 6, o[1].z / 6}, {o[2].x / 6, o[2].z / 6}, {o[3].x / 6, o[3].z / 6}};
+                    addQuad(tunnelOut, o, uv, tx.grass.get(), (o[0] + o[2]) * 0.5f - axis);
+                }
+                float v0 = i * tr.spacing / 8, v1 = (i + 1) * tr.spacing / 8;      // floor over the road: dimmer than the open road outside
+                Vec3 c0 = tr.at(i), c1 = tr.at(i + 1), r0 = tr.right(i), r1 = tr.right(i + 1);
+                auto fl = [&](Vec3 c, Vec3 r, float x) { Vec3 p = c + r * x; return Vec3{p.x, Terrain::base(p.x, p.z) + 0.14f, p.z}; };
+                Vec3 pv[4] = {fl(c0, r0, -5), fl(c0, r0, 5), fl(c1, r1, 5), fl(c1, r1, -5)};
+                Vec2 rv[4] = {{0, v0}, {1, v0}, {1, v1}, {0, v1}};
+                addQuad(tunnelIn, pv, rv, tx.road.get(), {0, 1, 0});
+                for (float s : {-1.f, 1.f}) {
+                    Vec3 k[4] = {fl(c0, r0, s * 5), fl(c0, r0, s * 5.9f), fl(c1, r1, s * 5.9f), fl(c1, r1, s * 5)};
+                    Vec2 kv[4] = {{0, v0 * 2}, {1, v0 * 2}, {1, v1 * 2}, {0, v1 * 2}};
+                    addQuad(tunnelIn, k, kv, tx.kerb.get(), {0, 1, 0});
+                    Vec3 g[4] = {k[1], fl(c0, r0, s * 6.8f), fl(c1, r1, s * 6.8f), k[2]};
+                    Vec2 gv[4] = {{0, v0 * 4}, {1, v0 * 4}, {1, v1 * 4}, {0, v1 * 4}};
+                    addQuad(tunnelIn, g, gv, tx.verge.get(), {0, 1, 0});
+                }
+                if (i > lo && i < hi && i % 2 == 0) tunnelLamps.push_back({a[5].x, a[5].y - 0.35f, a[5].z});
+            }
+            for (int end = 0; end < 2; ++end) {                                     // a pale concrete frame round each mouth
+                int i = end ? hi : lo;
+                Vec3 out = tr.dir(i) * (end ? 1.f : -1.f), axis = tr.at(i) + Vec3{0, Terrain::base(tr.at(i).x, tr.at(i).z) + 2.6f, 0};
+                std::vector<Vec3> in = ring(i, false), fr;
+                for (const Vec3& p : in) fr.push_back(axis + (p - axis) * 1.14f + Vec3{0, 0.15f, 0});
+                for (int j = 0; j + 1 < P; ++j) {
+                    Vec3 q[4] = {in[j], in[j + 1], fr[j + 1], fr[j]};
+                    addQuad(tunnelOut, q, none, nullptr, out, lip);
+                }
+            }
+            tunnelMid = tr.at((lo + hi) / 2);
+        }
         auto flip = [](Mesh m) { for (auto& v : m.v) v.y = -v.y; for (auto& t : m.t) std::swap(t.b, t.c); return m; };
         append(pine[3], cone(0.9f, 1.1f, 6, tx.rock.get()), {0, 0, 0});            // boulders, about the trees' collision size
         append(pine[3], flip(cone(0.9f, 0.8f, 6, tx.rock.get())), {0, 0, 0});
@@ -487,9 +544,17 @@ struct World {
         append(tank, dome, {0, 0.6f, 0});
         append(tank, box(0.14f, 0.3f, 0.14f, rgb565(220, 40, 40)), {0, 1.0f, 0});              // valve
         tank.reflect = 5;
-        for (int k = 0; k < 2; ++k) {                                               // nitrous flame, long and short for flicker
-            flame[k] = cone(0.24f, k ? 0.8f : 1.4f, 6, nullptr);
-            for (auto& t : flame[k].t) t.color = rgb565(255, 160, 50);
+        for (int k = 0; k < 2; ++k) {                                               // nitrous plasma, long and short for flicker
+            const float L = k ? 0.8f : 1.4f;                                        // white-hot core, blue-violet sheath, orange tip
+            struct Layer { float r, len; Vec3 c; };
+            for (Layer l : {Layer{0.26f, 0.70f * L, {80, 90, 255}}, Layer{0.19f, 0.95f * L, {70, 140, 255}}, Layer{0.08f, 1.25f * L, {225, 245, 255}}}) {
+                Mesh m = cone(l.r, l.len, 6, nullptr);
+                for (auto& t : m.t) t.color = rgb565(int(l.c.x), int(l.c.y), int(l.c.z));
+                append(flame[k], m, {0, 0, 0});
+            }
+            Mesh tip = cone(0.1f, 0.5f * L, 6, nullptr);                            // a faint orange wisp beyond the sheath
+            for (auto& t : tip.t) t.color = rgb565(255, 140, 50);
+            append(flame[k], tip, {0, 1.0f * L, 0});
         }
     }
 
@@ -514,6 +579,14 @@ struct World {
                 else if (weather == Weather::Rain) c = c * 0.82f;
                 m.tint[i] = c * (1.f / 205);                                        // the detail texture averages ~205
             }
+        }
+        tunnelOut.tint.resize(tunnelOut.v.size());                                   // the hill over the tunnel: lush at the foot, dry on top
+        for (size_t i = 0; i < tunnelOut.v.size(); ++i) {
+            Vec3 p = tunnelOut.v[i];
+            Vec3 c = mix(lush, dry, (p.y - Terrain::base(p.x, p.z)) / 9);
+            if (weather == Weather::Snow) c = Vec3{226, 232, 242};
+            else if (weather == Weather::Rain) c = c * 0.82f;
+            tunnelOut.tint[i] = c * (1.f / 205);
         }
     }
 
@@ -1052,6 +1125,7 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
     float ground = race.terrain.height(r.cam.x, r.cam.z, me.idx);
     r.cam.y = std::max(r.cam.y, ground + 1.2f);                                    // never inside a hill
     r.camYaw = cam.yaw;
+    const bool inTunnel = me.idx > race.tunnelLo && me.idx < race.tunnelHi;
     r.camPitch = 0.15f + cam.pitch * 0.7f;                                         // look down the slope with the car
     cam.boost += (float(me.boosting) - cam.boost) * std::min(1.f, 3 * dt);
     r.focal = (H / 2) / std::tan((55 + 12 * cam.boost) * kPi / 360);               // nitrous widens the view: a rush of speed
@@ -1061,6 +1135,7 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
         d.y = 0;
         return dot(d, d) < (r.fogEnd + radius) * (r.fogEnd + radius) && dot(d, fwd) > -radius;
     };
+    auto nearbyLamp = [&](Vec3 p) { Vec3 d = p - r.cam; return dot(d, d) < 55 * 55 && dot(d, fwd) > 0; };
     for (size_t i = 0; i < race.cars.size(); ++i) {                                 // nearest first: less overdraw
         const Car& c = race.cars[i];
         if (!visible(c.pos, 3)) continue;
@@ -1111,6 +1186,18 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
             }
         }
     }
+    if (me.boosting) {                                                // the plasma lights the road behind the car
+        Vec3 f{std::sin(me.yaw), -std::sin(me.pitch), std::cos(me.yaw)};
+        SpotLight glow;
+        glow.pos = me.pos + f * (w.carBounds[0].rear - 0.8f) + Vec3{0, 0.6f, 0};
+        glow.dir = normalize(f * -0.5f + Vec3{0, -1, 0});
+        glow.cosInner = 0.5f;
+        glow.cosOuter = 0.2f;
+        glow.intensity = 2.2f * (0.7f + 0.6f * noise(int(race.time * 40), 0, 77));
+        glow.range = 11;
+        glow.color = {0.45f, 0.5f, 1.f};
+        r.spots.push_back(glow);
+    }
     r.draw(w.road, Transform());
     r.draw(w.water, Transform());                                     // before the ground: the beds behind it fail the depth test
     for (size_t i = 0; i < w.ground.size(); ++i)
@@ -1118,6 +1205,15 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
     r.draw(w.gantry, w.gantryAt);
     for (const Transform& t : w.markersAt)
         if (visible(t.pos, 1)) r.draw(w.marker, t);
+    if (visible(w.tunnelMid, 30)) {                                   // the hill, then the liner, dim inside; beams light its walls too
+        r.draw(w.tunnelOut, Transform());
+        float a = r.ambient, s = r.sun;
+        r.ambient = a * 0.55f;
+        r.sun = s * 0.12f;
+        r.draw(w.tunnelIn, Transform());
+        r.ambient = a;
+        r.sun = s;
+    }
     r.spots.clear();                                    // beams light the track, terrain, gantry and posts only
     for (size_t i = 0; i < race.trees.size(); ++i) {
         if (!visible(race.trees[i], 3)) continue;
@@ -1141,6 +1237,8 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
         }
     }
     if (visible(w.bridgeAt.pos, race.bridgeLen / 2 + 2)) r.draw(w.bridge, w.bridgeAt);
+    for (const Vec3& p : w.tunnelLamps)                               // warm ceiling lamps, day and night
+        if (nearbyLamp(p)) lamps.push_back({p, {255, 214, 150}, 1.6f, 0});
     auto nearby = [&](Vec3 p, float range) { Vec3 d = p - r.cam; d.y = 0; return dot(d, d) < range * range && dot(d, fwd) > -2; };
     for (size_t i = 0; i < race.pickups.size(); ++i) {                // coins spin on edge, each a step behind the last; tanks turn slowly
         const Pickup& p = race.pickups[i];
@@ -1156,9 +1254,13 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
     }
     for (size_t i = 0; i < w.flagsAt.size(); ++i)
         if (nearby(w.flagsAt[i].pos, 80)) r.draw(w.flag[i % 3], w.flagsAt[i]);
-    if (me.boosting) {                                                // nitrous flames from both exhausts
+    if (me.boosting) {                                                // nitrous plasma from both exhausts
         Vec3 f{std::sin(me.yaw), -std::sin(me.pitch), std::cos(me.yaw)}, rt{f.z, 0, -f.x};
-        float flick = 0.7f + 0.6f * noise(int(race.time * 40), 0, 77);
+        int tick = int(race.time * 40);
+        float flick = 0.7f + 0.6f * noise(tick, 0, 77);
+        float a = r.ambient, s = r.sun;
+        r.ambient = 1.5f;                                              // glows: bright whatever the light
+        r.sun = 0;
         for (float side : {-0.4f, 0.4f}) {
             Vec3 nozzle = me.pos + f * w.carBounds[0].rear + rt * side + Vec3{0, 0.4f, 0};
             Transform t;
@@ -1166,9 +1268,15 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
             t.yaw = me.yaw;
             t.pitch = -kPi / 2;                                       // cone tip points out behind the car
             r.draw(w.flame[flick > 1 ? 0 : 1], t);
-            lamps.push_back({nozzle - f * 0.15f, {110, 150, 255}, 1.1f * flick, 0});
-            lamps.push_back({nozzle - f * (0.7f * flick), {255, 120, 30}, 0.8f * flick, 0});
+            lamps.push_back({nozzle - f * 0.15f, {150, 190, 255}, 1.2f * flick, 0});
+            lamps.push_back({nozzle - f * 0.9f, {110, 80, 255}, 0, 2.6f * flick});        // violet bloom round the plume
+            for (int k = 1; k <= 4; ++k) {                            // shock diamonds: bright beads along the jet, flickering apart
+                float wob = 0.85f + 0.3f * noise(tick + k, int(side * 5), 78);
+                lamps.push_back({nozzle - f * (0.42f * k * flick * wob), {170, 210, 255}, 0.75f - 0.1f * k, 0});
+            }
         }
+        r.ambient = a;
+        r.sun = s;
     }
     if (!sky.tint.empty())
         for (uint16_t& pixel : r.color) pixel = sky.tint[pixel];
@@ -1207,7 +1315,20 @@ static void render(Renderer& r, const Sky& sky, const World& w, const Race& race
             }
         }
     }
-    if (race.weather != Weather::Sunny) {
+    if (cam.boost > 0.2f) {                                           // speed streaks round the edge of the screen
+        int tick = int(race.time * 30);
+        for (int i = 0; i < 16; ++i) {
+            float ang = 2 * kPi * noise(i, tick, 91), dist = 0.62f + 0.3f * noise(i, tick, 92), len = 0.10f + 0.12f * noise(i, tick, 93);
+            for (int s = 0; s < 14; ++s) {
+                float d = dist + len * s / 14.f;
+                int x = int(W / 2 + std::cos(ang) * d * W * 0.62f), y = int(H / 2 + std::sin(ang) * d * H * 0.62f);
+                if (x < 0 || x >= W || y < 0 || y >= H) break;
+                uint16_t& px = r.color[size_t(y) * W + x];
+                px = Renderer::mix(px, rgb565(190, 215, 255), cam.boost * (0.25f + 0.45f * s / 14.f));
+            }
+        }
+    }
+    if (race.weather != Weather::Sunny && !inTunnel) {
         bool rain = race.weather == Weather::Rain;
         uint16_t col = rain ? rgb565(143, 162, 181) : rgb565(223, 230, 239);
         int count = rain ? 96 : 70;

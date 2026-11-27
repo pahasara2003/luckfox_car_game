@@ -236,6 +236,23 @@ int main() {
             assert(k.kind == Block::Railing || Terrain::wet(k.pos.x, k.pos.z) == 0);
         }
         for (auto& t : race.trees) assert(Terrain::wet(t.x, t.z) == 0);
+        {   // the tunnel: dry road, hill clear of houses and trees, walls on both sides, the road bends gently through it
+            int walls = 0;
+            for (int i = race.tunnelLo; i <= race.tunnelHi; ++i) assert(Terrain::wet(tr.at(i).x, tr.at(i).z) == 0);
+            for (auto& k : race.blocks) {
+                int i = tr.nearest(k.pos, 0, -1);
+                bool beside = i >= race.tunnelLo && i <= race.tunnelHi;
+                if (k.kind == Block::Railing) walls += i >= race.tunnelLo && i <= race.tunnelHi;
+                else assert(!beside || length(k.pos - tr.at(i)) > 18);
+            }
+            assert(walls == race.tunnelHi - race.tunnelLo);
+            for (auto& t : race.trees) {
+                int i = tr.nearest(t, 0, -1);
+                assert(!(i >= race.tunnelLo && i <= race.tunnelHi && length(t - tr.at(i)) < 14));
+            }
+            float bend = std::acos(std::max(-1.f, std::min(1.f, dot(tr.dir(race.tunnelLo), tr.dir(race.tunnelHi)))));
+            assert(bend < 0.5f);
+        }
         int coins = 0, tanks = 0;
         for (auto& p : race.pickups) { coins += !p.nitro; tanks += p.nitro; }
         assert(coins >= 15 && coins <= 24 && tanks >= 4);

@@ -165,6 +165,7 @@ struct Race {
     std::vector<Pickup> pickups;          // coins and nitrous for the player; they come back every lap
     int bridge = 0;                       // centreline sample where the road crosses the river
     float bridgeLen = 24;
+    int tunnelLo = 19, tunnelHi = 31;     // centreline samples where the road runs through a hill (the walls are railings)
     float time = -3;                      // countdown; the race clock starts at 0
     int laps = 3;
     Weather weather = Weather::Sunny;
@@ -460,6 +461,13 @@ private:
             p.y = Terrain::base(p.x, p.z);
             blocks.push_back({p, std::atan2(d.x, d.z), 0.3f, bridgeLen / 2, Block::Railing, 0});
         }
+        for (int i = tunnelLo; i < tunnelHi; i += 2)             // tunnel walls, one box per two samples so they follow the bend
+            for (float side : {-1.f, 1.f}) {
+                int m = i + 1;
+                Vec3 d = track.dir(m), p = track.at(m) + track.right(m) * (side * (track.halfWidth + track.kerb + 0.3f));
+                p.y = Terrain::base(p.x, p.z);
+                blocks.push_back({p, std::atan2(d.x, d.z), 0.3f, track.spacing + 0.15f, Block::Railing, 0});
+            }
         for (int i = 12, g = 0; i + 24 < track.n(); i += 44, ++g) {   // a short row every ~130 units, room to see the road
             float lane = (g % 3 - 1) * 2.5f;
             for (int k = 0; k < 9; k += 3) {
@@ -480,6 +488,8 @@ private:
             Vec3 p{(rnd() * 2 - 1) * 140, 0, (rnd() * 2 - 1) * 140};
             if (length(track.at(track.nearest(p, 0, -1)) - p) < track.halfWidth + track.kerb + 6) continue;
             if (Terrain::wet(p.x, p.z) > 0) continue;
+            int near = track.nearest(p, 0, -1);
+            if (near >= tunnelLo - 4 && near <= tunnelHi + 4 && length(track.at(near) - p) < 20) continue;   // the hill over the tunnel
             bool clear = true;
             for (auto& b : blocks) clear = clear && length(Vec3{b.pos.x - p.x, 0, b.pos.z - p.z}) > std::max(b.hx, b.hz) + 3;
             for (auto& t : trees) clear = clear && length(Vec3{t.x - p.x, 0, t.z - p.z}) > 6;

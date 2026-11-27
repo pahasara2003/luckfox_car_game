@@ -17,13 +17,16 @@ These are 320×240 frames rendered by the host simulation (`./cargame ppm`), sho
 | ![Morning](docs/screenshots/morning.png) | ![Night](docs/screenshots/night.png) |
 | **Rain:** a glowing nitrous tank ahead | **Snow on asphalt** |
 | ![Rain](docs/screenshots/rain.png) | ![Snow](docs/screenshots/snow.png) |
-| **Nitrous:** flames off the start line | |
-| ![Nitrous](docs/screenshots/nitrous.png) | |
+| **Nitrous:** plasma jets off the start line | **Tunnel:** through the hill on the start straight |
+| ![Nitrous](docs/screenshots/nitrous.png) | ![Tunnel](docs/screenshots/tunnel.png) |
+| **Tunnel mouth** at golden hour | |
+| ![Tunnel mouth](docs/screenshots/tunnel-mouth.png) | |
 
 ## Features
 
 - **A living landscape:** rolling hills coloured by height and slope, from lush valleys to dry hilltops and rocky slopes. There's a lake beside the start straight and a river under a red steel truss bridge.
 - **Buildings:** a village of houses, each with its own size, storeys, and brick, plank, stone or plaster walls under tiled roofs. Tower blocks stand on the east straight. At night their windows light up and porch lamps glow.
+- **A tunnel:** the start straight runs through a grassy hill. It has a concrete arch, ceiling lamps, a dimmer interior and a frame round each mouth. At night your headlights light the walls.
 - **Coins and nitrous:** short rows of glowing gold coins and blue nitrous tanks. They all come back each lap.
 - **Conditions:** night, morning, day or golden hour; sunny, rain or snow; gravel or asphalt. Each changes grip and the look of the world.
 - **Real handling:** a tyre model with drifting. Cars tilt and change speed on slopes (up to a 14% grade).
@@ -43,7 +46,7 @@ Keep the controller window focused: tap **Up/W** once and the car keeps driving,
 
 **T** cycles time (night, morning, day, golden hour), **C** cycles weather (sunny, rain, snow), and **G** switches between gravel and asphalt. The controller shows the current combination, and changes take effect during the race. Asphalt has more grip than gravel. Rain reduces grip, and snow reduces it further. At night a blue moon lights the hills, every car has glowing red tail lights, and your headlights (and the nearest rival's) light the road.
 
-**Nitrous.** You start with half a tank, and each tank you pick up adds about a third. A full tank boosts for 3 seconds: the car pulls harder and reaches about 180 km/h instead of 150. Flames shoot from the exhausts and the view widens. When the tank runs dry, the car eases back to its normal top speed.
+**Nitrous.** You start with half a tank, and each tank you pick up adds about a third. A full tank boosts for 3 seconds: the car pulls harder and reaches about 180 km/h instead of 150. Plasma jets shoot from the exhausts (a white-hot core, a blue sheath, shock diamonds and a glow on the road), speed streaks flash at the screen edge and the view widens. When the tank runs dry, the car eases back to its normal top speed.
 
 **Driving and drifting.** Hold **Left** or **Right** at speed for more than about a third of a second and the car drifts: the car swings smoothly round even the tight bends at full throttle (90° in about 55 units). Let go and it straightens up. Short taps steer normally. Under the drift, the cars use a tyre model: 4WD with a rear-biased torque split, tyres that grip up to a limit and then slide, ABS brakes, and weight that moves between the axles. Tapping **Down** into a bend also swings the tail out. The AI drives the same way, on the keys with the drift. Each car has its own corner and top speed. A car that's blocked pulls out to pass, and cars far behind you find a little extra pace, so the race stays close.
 
@@ -70,8 +73,8 @@ Use `night`, `morning`, `day` or `evening` for time, `sunny`, `rain` or `snow` f
 | --- | --- |
 | `src/engine3d.h` | Software rasterizer: camera, near-plane clipping, perspective-correct textures, 1/z depth buffer, flat lighting, fog, spot and rim lights |
 | `src/objload.h` | OBJ/MTL loader with colours and PPM textures (`assimp export` and `magick` convert other formats) |
-| `src/game.h` | Track, terrain heights with the lake and river, buildings and bridge placement, coins and nitrous, car physics, AI, laps and positions; no rendering |
-| `src/cargame.cpp` | Textures, meshes (houses, towers, bridge, water, coins, tanks), HUD, display thread and input for the game |
+| `src/game.h` | Track, terrain heights with the lake and river, buildings and bridge placement, coins and nitrous, the tunnel's range and walls, car physics, AI, laps and positions; no rendering |
+| `src/cargame.cpp` | Textures, meshes (houses, towers, bridge, tunnel, water, coins, tanks), plasma jets, HUD, display thread and input for the game |
 | `src/font_hud.h` | Anti-aliased Inter HUD font bitmaps, glyph metrics and data tables |
 | `src/demo3d.cpp` | Model viewer demo with spot lights (`demo3d FRAMES display MODEL.obj`) |
 | `tools/drive.py` | PC keyboard controller |
