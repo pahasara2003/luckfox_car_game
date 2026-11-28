@@ -25,7 +25,10 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <fcntl.h>
+#include <linux/gpio.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -771,6 +774,8 @@ static void minimap(std::vector<uint16_t>& fb, const Race& race) {
     for (int i = int(race.cars.size()) - 1; i >= 0; --i) plot(race.cars[i].pos, dots[i], 1);
 }
 
+static const float kNewRaceDelay = 6;                                           // seconds on the finish screen before the menu
+
 static void hud(std::vector<uint16_t>& fb, const Race& race) {
     const Car& me = race.cars[0];
     const uint16_t white = 0xFFFF;
@@ -847,7 +852,7 @@ static void hud(std::vector<uint16_t>& fb, const Race& race) {
         std::string finTitle = "FINISHED " + std::to_string(p) + th;
         centred(fb, fontLarge, 50, finTitle, p == 1 ? gold : white);
         centred(fb, fontMedium, 80, "TIME " + clock(me.finishTime), white);
-        centred(fb, fontSmall, 104, "R TO RACE AGAIN", labelColor);
+        centred(fb, fontSmall, 104, "NEW RACE IN " + std::to_string(std::max(1, int(std::ceil(kNewRaceDelay - (race.time - me.finishTime))))), labelColor);
     }
 }
 
@@ -877,6 +882,76 @@ static Vec3 weatherTint(Weather w) {
 static const char* timeName(TimeOfDay t) { return kDaylight[int(t)].name; }
 static const char* weatherName(Weather w) { return w == Weather::Sunny ? "sunny" : w == Weather::Rain ? "rain" : "snow"; }
 static const char* roadName(RoadSurface s) { return s == RoadSurface::Asphalt ? "asphalt" : "gravel"; }
+
+// ---------------------------------------------------------------- start menu
+// A row of option cards over a still of the grid. Left/right pick a card, middle changes it (or starts on GO).
+static void menu(std::vector<uint16_t>& fb, const std::vector<uint16_t>& scene, int sel, TimeOfDay tod, Weather weather,
+                 RoadSurface surface, const Texture& road, const Texture& checker) {
+    fb = scene;
+    const int TW = 60, TH = 44, CW = 72, CH = 92, Y0 = H - CH - 6;
+    auto px = [&](int x, int y) -> uint16_t& { return fb[size_t(y) * W + x]; };
+    auto disc = [&](int tx, int ty, float cx, float cy, float rad, uint16_t col) {
+        for (int y = 0; y < TH; ++y)
+            for (int x = 0; x < TW; ++x)
+                if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= rad * rad) px(tx + x, ty + y) = col;
+    };
+    auto cloud = [&](int tx, int ty, uint16_t col) {
+        disc(tx, ty, 20, 20, 9, col); disc(tx, ty, 32, 15, 11, col); disc(tx, ty, 43, 21, 8, col);
+        for (int y = 20; y < 29; ++y) for (int x = 20; x < 44; ++x) px(tx + x, ty + y) = col;
+    };
+    auto toV = [](Vec3 c) { return rgb565(clamp255(c.x), clamp255(c.y), clamp255(c.z)); };
+    auto upper = [](std::string s) { for (char& c : s) c = char(std::toupper((unsigned char)c)); return s; };
+    centred(fb, fontLarge, 10, "RACE SETUP", rgb565(255, 215, 60));
+    centred(fb, fontSmall, Y0 - 16, "LEFT/RIGHT: PICK   MIDDLE: CHANGE", rgb565(220, 230, 240));
+    const char* labels[4] = {"TIME", "WEATHER", "ROAD", "START"};
+    std::string values[4] = {upper(timeName(tod)), upper(weatherName(weather)), upper(roadName(surface)), "GO!"};
+    for (int i = 0; i < 4; ++i) {
+        int x0 = 7 + i * (CW + 6), tx = x0 + (CW - TW) / 2, ty = Y0 + 22;
+        for (int y = Y0; y < Y0 + CH; ++y)                                          // darkened card
+            for (int x = x0; x < x0 + CW; ++x) {
+                bool edge = x < x0 + 2 || x >= x0 + CW - 2 || y < Y0 + 2 || y >= Y0 + CH - 2;
+                px(x, y) = edge ? (i == sel ? rgb565(255, 215, 60) : rgb565(90, 100, 115)) : (px(x, y) >> 2) & 0x39E7;
+            }
+        drawText(fb, fontSmall, x0 + (CW - textWidth(fontSmall, labels[i])) / 2, Y0 + 6, labels[i], rgb565(180, 200, 220));
+        if (i == 0) {                                                               // sky colours of that time, with its sun or moon
+            const Daylight& d = kDaylight[int(tod)];
+            for (int y = 0; y < TH; ++y)
+                for (int x = 0; x < TW; ++x) px(tx + x, ty + y) = toV(d.zenith + (d.horizon - d.zenith) * (y / float(TH - 10)));
+            float sx = tod == TimeOfDay::Morning ? 14 : tod == TimeOfDay::Evening ? 46 : 38;
+            float sy = tod == TimeOfDay::Day ? 12 : tod == TimeOfDay::Night ? 11 : 30;
+            if (tod != TimeOfDay::Day) disc(tx, ty, sx, sy + 3, 11, toV(d.glow));
+            disc(tx, ty, sx, sy, 6, toV(d.disc));
+            if (tod == TimeOfDay::Night) {
+                disc(tx, ty, sx + 3, sy - 2, 5, toV(d.zenith));                    // crescent
+                for (int s = 0; s < 9; ++s) px(tx + 4 + s * 6, ty + 4 + (s * 7) % 20) = 0xFFFF;
+            }
+            uint16_t land = tod == TimeOfDay::Night ? rgb565(16, 30, 22) : rgb565(52, 104, 46);
+            for (int y = TH - 10; y < TH; ++y) for (int x = 0; x < TW; ++x) px(tx + x, ty + y) = land;
+        } else if (i == 1) {                                                        // sun, rain or snow
+            uint16_t bg = weather == Weather::Sunny ? rgb565(90, 160, 230) : weather == Weather::Rain ? rgb565(70, 80, 92) : rgb565(150, 162, 176);
+            for (int y = 0; y < TH; ++y) for (int x = 0; x < TW; ++x) px(tx + x, ty + y) = bg;
+            if (weather == Weather::Sunny) {
+                for (int a = 0; a < 8; ++a)
+                    for (float r = 13; r < 19; r += 0.5f)
+                        px(tx + 30 + int(r * std::cos(a * kPi / 4)), ty + 22 + int(r * std::sin(a * kPi / 4))) = rgb565(255, 220, 80);
+                disc(tx, ty, 30, 22, 10, rgb565(255, 220, 80));
+            } else if (weather == Weather::Rain) {
+                cloud(tx, ty - 4, rgb565(170, 176, 186));
+                for (int s = 0; s < 7; ++s)
+                    for (int k = 0; k < 6; ++k) px(tx + 16 + s * 5 - k / 2, ty + 30 + k + (s & 1) * 4) = rgb565(120, 180, 255);
+            } else {
+                cloud(tx, ty - 4, rgb565(236, 240, 246));
+                for (int s = 0; s < 8; ++s) disc(tx, ty, 14 + s * 4.5f, 33 + (s & 1) * 5, 1.5f, 0xFFFF);
+            }
+        } else {                                                                    // the game's own road or chequered-flag texture
+            const Texture& t = i == 2 ? road : checker;
+            for (int y = 0; y < TH; ++y)
+                for (int x = 0; x < TW; ++x) px(tx + x, ty + y) = t.px[size_t(y * t.h / TH) * t.w + x * t.w / TW];
+        }
+        const HudFont& vf = i == 3 ? fontMedium : fontSmall;
+        drawText(fb, vf, x0 + (CW - textWidth(vf, values[i])) / 2, Y0 + 72, values[i], i == 3 ? rgb565(60, 245, 100) : 0xFFFF);
+    }
+}
 // Sky panorama: a 360-degree picture of sky, clouds, snowy mountains and wooded hills, painted when conditions change
 // and fixed to compass direction so it turns with the camera. Column = heading, row = elevation above horizon.
 struct Sky {
@@ -1482,6 +1557,13 @@ int main(int argc, char** argv) {
             writePpm(r.color);
             return 0;
         }
+        if (mode == "menu") {                                                   // ./cargame menu [sel] [conditions] > menu.ppm
+            render(r, sky, world, race, tod, cam, 0);
+            std::vector<uint16_t> scene = r.color;
+            menu(r.color, scene, argc > 2 ? std::atoi(argv[2]) % 4 : 3, tod, race.weather, race.surface, *world.tx.road, *world.tx.checker);
+            writePpm(r.color);
+            return 0;
+        }
         if (mode == "bench") {
             int frames = argc > 2 ? std::atoi(argv[2]) : 200;
             race.cars[0].ai = true;
@@ -1502,7 +1584,7 @@ int main(int argc, char** argv) {
         if (!sim) {
             tft.reset(new ILI9341(board::spi, board::gpiochip, board::dc, board::reset, board::hz, board::cs));
             tft->init();
-            tft->setRotation((board::rotation + (flip ? 3 : 1)) % 4);             // landscape
+            tft->setRotation((board::rotation + (flip ? 1 : 3)) % 4);             // landscape, turned 180° for this mounting
             show.reset(new Presenter(*tft));
         }
         auto present = [&](const std::vector<uint16_t>& fb) {
@@ -1514,12 +1596,28 @@ int main(int argc, char** argv) {
             if (std::fwrite(spiBytes.data(), 1, spiBytes.size(), stdout) != spiBytes.size() || std::fflush(stdout)) throw std::runtime_error("viewer closed");
         };
         RawStdin raw;
+        // Three push buttons to GND (Pico Mini B pads): left GPIO1_C7, nitrous GPIO1_D2, right GPIO1_D3.
+        int buttons = -1;
+        if (!sim) {
+            int chip = open(board::gpiochip, O_RDONLY);
+            gpiohandle_request req{};
+            req.lineoffsets[0] = 23; req.lineoffsets[1] = 26; req.lineoffsets[2] = 27;
+            req.lines = 3;
+            req.flags = GPIOHANDLE_REQUEST_INPUT | GPIOHANDLE_REQUEST_ACTIVE_LOW | GPIOHANDLE_REQUEST_BIAS_PULL_UP;
+            std::strcpy(req.consumer_label, "cargame-buttons");
+            if (chip >= 0 && ioctl(chip, GPIO_GET_LINEHANDLE_IOCTL, &req) == 0) buttons = req.fd;
+            else std::fprintf(status, "buttons: GPIO lines 23/26/27 unavailable (%s), keyboard only\n", std::strerror(errno));
+            if (chip >= 0) close(chip);
+        }
         if (demo) race.cars[0].ai = true;
         std::fprintf(status, "READY\n");
         std::fflush(status);
 
-        Input in;
+        Input in, kb;                                                           // kb: keyboard state from stdin
         bool stdinOpen = true, quit = false, cruise = false;
+        bool inMenu = !demo, sceneStale = true;
+        int sel = 3, prevBtn = 0;                                                  // menu card; GO is picked first
+        std::vector<uint16_t> scene;
         auto last = std::chrono::steady_clock::now(), report = last;
         int frames = 0;
         double renderSec = 0;
@@ -1537,9 +1635,9 @@ int main(int argc, char** argv) {
                     if (b >= 0x40 && b <= 0x5F) {
                         if (b & 1) cruise = true;                                     // tap up: throttle stays on
                         if (b & 2) cruise = false;                                    // down brakes and cancels it
-                        in.up = (b & 1) || cruise; in.down = b & 2; in.left = b & 4; in.right = b & 8; in.nitro = b & 16;
+                        kb.up = (b & 1) || cruise; kb.down = b & 2; kb.left = b & 4; kb.right = b & 8; kb.nitro = b & 16;
                     }
-                    else if (b == 'r') { cruise = false; in.up = false; race.reset(); cam.init = false; if (demo) race.cars[0].ai = true; }
+                    else if (b == 'r') { cruise = false; kb.up = false; race.reset(); cam.init = false; if (demo) race.cars[0].ai = true; }
                     else if (b == 't') tod = TimeOfDay((int(tod) + 1) % 4);
                     else if (b == 'c') race.weather = Weather((int(race.weather) + 1) % 3);
                     else if (b == 'g') race.surface = race.surface == RoadSurface::Gravel ? RoadSurface::Asphalt : RoadSurface::Gravel;
@@ -1547,6 +1645,34 @@ int main(int argc, char** argv) {
                 }
             }
             if (quit) break;
+            in = kb;
+            gpiohandle_data bv{};
+            bool btnOk = buttons >= 0 && ioctl(buttons, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &bv) == 0;
+            if (btnOk) {
+                bool L = bv.values[0], M = bv.values[1], R = bv.values[2];
+                in.down |= L && R;                                                // both: brake, then reverse
+                in.up = !in.down;                                                 // otherwise the throttle is always on
+                in.left |= L && !R; in.right |= R && !L; in.nitro |= M;
+            }
+            int btn = in.left | in.right << 1 | in.nitro << 2 | kb.up << 3, press = btn & ~prevBtn;
+            prevBtn = btn;
+            bool start = false;
+            if (inMenu) {
+                if (press & 1) sel = (sel + 3) % 4;
+                if (press & 2) sel = (sel + 1) % 4;
+                if (press & 4) {
+                    if (sel == 0) tod = TimeOfDay((int(tod) + 1) % 4);
+                    else if (sel == 1) race.weather = Weather((int(race.weather) + 1) % 3);
+                    else if (sel == 2) race.surface = race.surface == RoadSurface::Gravel ? RoadSurface::Asphalt : RoadSurface::Gravel;
+                    else start = true;
+                }
+                start |= (press & 8) != 0;                                           // keyboard Up starts too
+                if (press) {
+                    std::fprintf(status, "menu: press %s card %d %s/%s/%s%s\n", press & 1 ? "L" : press & 2 ? "R" : press & 4 ? "M" : "up", sel,
+                                 timeName(tod), weatherName(race.weather), roadName(race.surface), start ? " -> race" : "");
+                    std::fflush(status);
+                }
+            }
             bool skyChanged = oldTime != tod || oldWeather != race.weather;
             if (skyChanged) setSky(r, sky, tod, race.weather);
             if (oldTime != tod) world.tx.paintBuildings(tod == TimeOfDay::Night);
@@ -1555,6 +1681,25 @@ int main(int argc, char** argv) {
             auto now = std::chrono::steady_clock::now();
             float dt = std::min(0.1f, std::chrono::duration<float>(now - last).count());
             last = now;
+            if (start) { inMenu = false; cruise = false; kb.up = false; race.reset(); cam.init = false; }
+            if (inMenu) {
+                if (sceneStale || skyChanged || oldSurface != race.surface) {          // still of the grid in the chosen conditions
+                    render(r, sky, world, race, tod, cam, 0);
+                    scene = r.color;
+                    sceneStale = false;
+                }
+                menu(r.color, scene, sel, tod, race.weather, race.surface, *world.tx.road, *world.tx.checker);
+                present(r.color);
+                continue;
+            }
+            const Car& me0 = race.cars[0];
+            if (me0.finishTime >= 0 && race.time - me0.finishTime > kNewRaceDelay) {   // finish screen over: back to the menu
+                race.reset(); cam.init = false;
+                if (demo) race.cars[0].ai = true;
+                else inMenu = sceneStale = true;
+                std::fprintf(status, "race over: back to the menu\n");
+                std::fflush(status);
+            }
             for (float left = dt; left > 1e-6f; left -= 1 / 30.f) race.step(std::min(left, 1 / 30.f), in);
             render(r, sky, world, race, tod, cam, dt);
             hud(r.color, race);
@@ -1565,9 +1710,10 @@ int main(int argc, char** argv) {
             double s = std::chrono::duration<double>(shown - report).count();
             if (s >= 2 || skyChanged || oldSurface != race.surface) {
                 const Car& me = race.cars[0];
-                std::fprintf(status, "%.1f fps render %.0f ms %s/%s/%s lap %d/%d P%d %d km/h\n", frames / s, 1000 * renderSec / frames,
+                std::fprintf(status, "%.1f fps render %.0f ms %s/%s/%s lap %d/%d P%d %d km/h btn %s\n", frames / s, 1000 * renderSec / frames,
                             timeName(tod), weatherName(race.weather), roadName(race.surface),
-                            std::max(1, std::min(race.laps, me.lapsDone + 1)), race.laps, race.position(0), int(std::fabs(me.speed) * 4));
+                            std::max(1, std::min(race.laps, me.lapsDone + 1)), race.laps, race.position(0), int(std::fabs(me.speed) * 4),
+                            !btnOk ? "none" : bv.values[0] ? (bv.values[2] ? "L+R" : "L") : bv.values[2] ? "R" : bv.values[1] ? "M" : "-");
                 std::fflush(status);
                 frames = 0; renderSec = 0; report = shown;
             }

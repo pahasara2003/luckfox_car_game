@@ -1,14 +1,16 @@
 # luckfox_car_game
 
-A textured 3D rally game for the Luckfox Pico Mini B and an ILI9341 display, built on [luckfox_tft_ili9341](https://github.com/pahasara2003/luckfox_tft_ili9341) (git submodule in `lib/ili9341`).
+A textured 3D rally game that runs on a tiny **Luckfox Pico Mini B** board with a 2.4" **ILI9341** screen. Race five AI cars over 3 laps through hills, a village, over a river bridge and through a tunnel, using three push buttons or your PC keyboard.
 
-Clone with `git clone --recurse-submodules`.
+The display driver is [luckfox_tft_ili9341](https://github.com/pahasara2003/luckfox_tft_ili9341), included as a git submodule in `lib/ili9341`. Clone with:
 
-Race five AI cars over 3 laps, driving with your PC's keyboard over the USB `adb` link.
+```sh
+git clone --recurse-submodules https://github.com/pahasara2003/luckfox_car_game
+```
 
 ## Screenshots
 
-These are 320×240 frames rendered by the host simulation (`./cargame ppm`), shown at 2× size. They're the same pixels the game sends to the panel.
+These are real 320×240 frames from the game (rendered by the host simulation), shown at 2× size.
 
 | Day: the village by the start straight | Golden hour: over the truss bridge |
 | --- | --- |
@@ -22,74 +24,153 @@ These are 320×240 frames rendered by the host simulation (`./cargame ppm`), sho
 | **Tunnel mouth** at golden hour | |
 | ![Tunnel mouth](docs/screenshots/tunnel-mouth.png) | |
 
-## Features
+## How to play
 
-- **A living landscape:** rolling hills coloured by height and slope, from lush valleys to dry hilltops and rocky slopes. There's a lake beside the start straight and a river under a red steel truss bridge.
-- **Buildings:** a village of houses, each with its own size, storeys, and brick, plank, stone or plaster walls under tiled roofs. Tower blocks stand on the east straight. At night their windows light up and porch lamps glow.
-- **A tunnel:** the start straight runs through a grassy hill. It has a concrete arch, ceiling lamps, a dimmer interior and a frame round each mouth. At night your headlights light the walls.
-- **Coins and nitrous:** short rows of glowing gold coins and blue nitrous tanks. They all come back each lap.
-- **Conditions:** night, morning, day or golden hour; sunny, rain or snow; gravel or asphalt. Each changes grip and the look of the world.
-- **Real handling:** a tyre model with drifting. Cars tilt and change speed on slopes (up to a 14% grade).
-- **Six cars:** six distinct models, each AI with its own line, corner speed and top speed.
-- **HUD:** lap, race time, best lap, position, coins, nitrous gauge, speed and a minimap.
+### The race
 
-## Build and play
+- You start in 6th place behind five AI cars. The race is **3 laps**, after a short countdown on the grid.
+- Collect **gold coins** (the HUD counts them) and **blue nitrous tanks** to fill your boost. They all come back every lap.
+- The screen shows your lap, race time, best lap, position, coins, nitrous gauge, speed and a minimap.
 
-Wire the display as in the [library README](lib/ili9341/README.md#wiring-luckfox-pico-mini-b-example), connect the board over USB, then:
+### Start menu
+
+The game opens on a **race setup** menu: a row of cards for **time**, **weather**, **road** and **start**, each with a small preview picture, over a view of the starting grid in the chosen conditions.
+
+| Press | What happens |
+|---|---|
+| **Left / Right** | pick a card |
+| **Middle** | change that card's option, or start the race on **GO!** |
+
+**Up** on the PC keyboard also starts the race. When you finish, the result stays on screen for 6 seconds, then the menu comes back for a new race.
+
+### Controls with the 3 buttons
+
+The car **accelerates by itself**; you only steer, boost and brake.
+
+| Press | What happens |
+|---|---|
+| **Left** | steer left |
+| **Right** | steer right |
+| **Middle** | nitrous boost (while held) |
+| **Left + Right together** | brake; keep holding after the car stops and it reverses |
+
+### Controls with the PC keyboard
+
+Run `python3 tools/drive.py` and keep its window focused. The keyboard works alongside the buttons.
+
+| Key | What happens |
+|---|---|
+| **Up / W** | tap once and the car keeps accelerating |
+| **Down / S** | brake (and stop the auto-throttle); reverse when stopped |
+| **Left / Right** | steer |
+| **Space** or **Shift** | nitrous (while held) |
+| **T** | change time: night, morning, day, golden hour |
+| **C** | change weather: sunny, rain, snow |
+| **G** | switch road: gravel or asphalt |
+| **R** | restart the race |
+| **Esc** | quit |
+
+### Driving tips
+
+- **Drifting:** hold Left or Right at speed for more than about a third of a second and the car slides into a drift. It swings round even tight bends at full speed. Let go and it straightens up. Short taps steer normally.
+- **Nitrous:** you start with half a tank, and each tank you collect adds about a third. A full tank lasts 3 seconds and takes you from about 150 to 180 km/h, with plasma jets from the exhausts and a wider view.
+- **Grip:** asphalt grips better than gravel. Rain makes the road slippery, and snow even more so.
+- **Hills:** cars slow down uphill and speed up downhill (slopes up to 14%).
+- **The AI:** every rival has its own line, corner speed and top speed. They overtake when blocked, and cars far behind catch up a little, so the race stays close.
+- **Night:** a blue moon lights the hills, cars glow with red tail lights, and your headlights light the road and the tunnel walls.
+
+## What you need
+
+- Luckfox Pico Mini B
+- 2.4" ILI9341 SPI display (240×320)
+- 3 push buttons
+- Jumper wires and a good USB cable to your PC
+
+## Wiring
+
+Pin numbers are the board's physical side pads, 1 to 24.
+
+### Display
+
+| Display pin | Board pin | Signal |
+|---|---:|---|
+| VCC | 3 | 3V3 |
+| GND | 2 or 21 | GND |
+| SCK / CLK | 7 | SPI0 clock |
+| DIN / MOSI | 8 | SPI0 MOSI |
+| SDO / MISO | 9 | SPI0 MISO |
+| CS | 13 | GPIO1_D1 |
+| DC / RS | 10 | GPIO1_C4 |
+| RST | 16 | GPIO1_C6 |
+| LED / BL (backlight) | 11 | GPIO1_C5 |
+
+Check your module's voltage and backlight circuit before connecting. Keep the backlight on pin 11 rather than straight on 3V3: the extra current on 3V3 can dim the screen and reset the panel.
+
+### Buttons
+
+Wire each button between its pin and **GND**. The game turns on the internal pull-ups, so a pressed button reads low. If your kernel ignores the pull-ups, add a 10 kΩ resistor from each button pin to 3V3.
+
+| Button | Board pin | Signal | gpiochip1 line |
+|---|---:|---|---:|
+| Left | 17 | GPIO1_C7 | 23 |
+| Middle (nitrous) | 14 | GPIO1_D2 | 26 |
+| Right | 15 | GPIO1_D3 | 27 |
+
+## Build and run
+
+You need the Luckfox SDK at `~/luckfox-pico` for the cross-compiler (or pass `CROSS=/path/to/arm-rockchip830-linux-uclibcgnueabihf-g++`).
 
 ```sh
-make deploy                # cross-compile with the Luckfox SDK toolchain, push to /root/cargame and the car models to /root/assets/cars
-python3 tools/drive.py     # prepare the board, start the game, open the controller window
+make deploy                # build for the board and copy the game and car models to /root
+python3 tools/drive.py     # set up the board, start the game and open the keyboard window
 ```
 
-Keep the controller window focused: tap **Up/W** once and the car keeps driving, **Down/S** brakes (and stops the auto-throttle), **Left/Right** steer, hold **Space** (or **Shift**) for nitrous, **R** restarts, and **Esc** quits. Add `flip` (`python3 tools/drive.py flip`) if the picture is upside down.
+To play with only the buttons and no PC, make the game start at every boot:
 
-**T** cycles time (night, morning, day, golden hour), **C** cycles weather (sunny, rain, snow), and **G** switches between gravel and asphalt. The controller shows the current combination, and changes take effect during the race. Asphalt has more grip than gravel. Rain reduces grip, and snow reduces it further. At night a blue moon lights the hills, every car has glowing red tail lights, and your headlights (and the nearest rival's) light the road.
+```sh
+make autostart             # installs /etc/init.d/S99zcargame and parks the Wi-Fi boot script (undo: see the Makefile)
+```
 
-**Nitrous.** You start with half a tank, and each tank you pick up adds about a third. A full tank boosts for 3 seconds: the car pulls harder and reaches about 180 km/h instead of 150. Plasma jets shoot from the exhausts (a white-hot core, a blue sheath, shock diamonds and a glow on the road), speed streaks flash at the screen edge and the view widens. When the tank runs dry, the car eases back to its normal top speed.
+This is for a board with the ESP32 removed: it moves the board's `S98esp32wifi` boot script to `/root/S98esp32wifi.disabled`, because its Wi-Fi driver takes the display's SPI bus. The board then opens the start menu about 15 seconds after power-on, and the game keeps running when you unplug the PC. `drive.py` still works: it stops the autostarted copy and starts its own.
 
-**Driving and drifting.** Hold **Left** or **Right** at speed for more than about a third of a second and the car drifts: the car swings smoothly round even the tight bends at full throttle (90° in about 55 units). Let go and it straightens up. Short taps steer normally. Under the drift, the cars use a tyre model: 4WD with a rear-biased torque split, tyres that grip up to a limit and then slide, ABS brakes, and weight that moves between the axles. Tapping **Down** into a bend also swings the tail out. The AI drives the same way, on the keys with the drift. Each car has its own corner and top speed. A car that's blocked pulls out to pass, and cars far behind you find a little extra pace, so the race stays close.
+Options: `night`, `morning`, `day` or `evening` for the time; `sunny`, `rain` or `snow` for the weather; `gravel` or `asphalt` for the road. The defaults are day, sunny and gravel. The picture is turned 180° to match how the panel is mounted; add `flip` if it's upside down on yours.
 
-`make deploy` expects the SDK at `~/luckfox-pico`; pass `CROSS=/path/to/arm-rockchip830-linux-uclibcgnueabihf-g++` otherwise.
-
-**Board with the ESP32 Wi-Fi image:** `drive.py` hands SPI0 from the Wi-Fi driver to `spidev` and holds the ESP32 in reset, because the ESP32 shares the display's D/C and backlight pins (see the library README). Wi-Fi is off until the next reboot.
+**ESP32 Wi-Fi image:** on a board that still has the ESP32, its Wi-Fi driver takes SPI0 and shares the display's DC and backlight pins. `drive.py` hands SPI0 to `spidev` and holds the ESP32 in reset, until the next reboot. With the ESP32 removed and `make autostart` installed, the boot script does this for you.
 
 ## Other modes
 
 ```sh
-make cargame                         # host build of the same game
-python3 tools/drive.py sim           # play it on the PC, no board: shows the exact bytes the panel would get, 2x size
-./cargame ppm 14 a night rain asphalt > frame.ppm  # keys: u d l r n (nitrous), a = autopilot; optional time, climate and road
-./cargame bench 200 day sunny gravel                # render-only timing; same optional conditions
-adb shell /root/cargame demo         # on the board: attract mode, no controller needed
-make test                            # engine and game self-checks on the host
+make cargame                         # build the game for your PC
+python3 tools/drive.py sim           # play on the PC without a board
+./cargame ppm 14 a night rain asphalt > frame.ppm  # save one frame (keys: u d l r n, a = autopilot)
+./cargame bench 200 day sunny gravel                # time the renderer
+./cargame menu 1 night snow > menu.ppm              # save the start menu (1 = second card highlighted)
+adb shell /root/cargame demo         # attract mode on the board: the car drives itself
+make test                            # self-checks for the engine and game
 ```
-
-Use `night`, `morning`, `day` or `evening` for time, `sunny`, `rain` or `snow` for weather, and `gravel` or `asphalt` for the road. The defaults are day, sunny and gravel.
-
-## Layout
-
-| File | What it is |
-| --- | --- |
-| `src/engine3d.h` | Software rasterizer: camera, near-plane clipping, perspective-correct textures, 1/z depth buffer, flat lighting, fog, spot and rim lights |
-| `src/objload.h` | OBJ/MTL loader with colours and PPM textures (`assimp export` and `magick` convert other formats) |
-| `src/game.h` | Track, terrain heights with the lake and river, buildings and bridge placement, coins and nitrous, the tunnel's range and walls, car physics, AI, laps and positions; no rendering |
-| `src/cargame.cpp` | Textures, meshes (houses, towers, bridge, tunnel, water, coins, tanks), plasma jets, HUD, display thread and input for the game |
-| `src/font_hud.h` | Anti-aliased Inter HUD font bitmaps, glyph metrics and data tables |
-| `src/demo3d.cpp` | Model viewer demo with spot lights (`demo3d FRAMES display MODEL.obj`) |
-| `tools/drive.py` | PC keyboard controller |
-| `tools/mkfont.py` | Font header generator: renders Inter font sizes/weights to C++ headers |
-| `assets/cars/` | Car models from Kenney's [Car Kit](https://kenney.nl/assets/car-kit) (CC0), palette texture converted to PPM |
 
 ## Performance
 
-On the Pico Mini B (single Cortex-A7, 1.1 GHz), `cargame bench 200` measures about 35 ms per frame by day and 47 ms at night. That's rendering alone, without the display. The game runs at roughly 20 fps by day and less at night. Frames are sent to the display on a second thread while the next one renders.
+On the Pico Mini B (one Cortex-A7 core at 1.1 GHz), rendering takes about 35 ms per frame by day and 47 ms at night. The game runs at roughly 20 fps by day and a little less at night. Frames go to the display on a second thread while the next one renders.
 
-On the development PC (Intel Core i5-1235U), `cargame bench 600` (pinned to one core with `taskset`) measures about 7 ms per frame by day and 9 ms at night.
+On a PC (Intel Core i5-1235U, one core), a frame takes about 7 ms by day and 9 ms at night.
 
-The buildings, bridge and water are built in code from a few hundred flat-coloured triangles. Kenney's ready-made houses are 1,500 to 4,000 triangles each, which is too many for the single Cortex-A7.
+The buildings, bridge and water are made in code from a few hundred flat-coloured triangles, because ready-made 3D houses (1,500 to 4,000 triangles each) are too heavy for the single core. Full speed also needs the `pushImage` change in `lib/ili9341` that sends pixels in 4 KB SPI writes; without it the game runs at about 17 fps.
 
-Full speed needs the `pushImage` change in `lib/ili9341` that packs pixels into 4 KB SPI writes. With the original one-write-per-row code the game runs at about 17 fps.
+## Project files
+
+| File | What it is |
+| --- | --- |
+| `src/engine3d.h` | The 3D software renderer: camera, clipping, textures, depth buffer, lighting, fog |
+| `src/game.h` | Track, terrain, buildings, coins and nitrous, car physics, AI, laps (no drawing code) |
+| `src/cargame.cpp` | Textures, 3D models, sky, HUD, display thread, buttons and keyboard input |
+| `src/objload.h` | Loader for OBJ/MTL 3D models with PPM textures |
+| `src/font_hud.h` | Inter font bitmaps for the HUD |
+| `src/demo3d.cpp` | Model viewer demo (`demo3d FRAMES display MODEL.obj`) |
+| `tools/drive.py` | PC keyboard controller and board setup |
+| `tools/S99zcargame` | Boot script that starts the game without a PC (`make autostart`) |
+| `tools/mkfont.py` | Generates the HUD font header |
+| `assets/cars/` | Car models from Kenney's [Car Kit](https://kenney.nl/assets/car-kit) |
 
 ## Credits
 

@@ -21,6 +21,14 @@ deploy: board/cargame
 	adb push board/cargame /root/cargame
 	adb shell mkdir -p /root/assets/cars
 	adb push assets/cars/. /root/assets/cars/
+	adb shell sync                                # flush to flash: pulling power right after a push left a 0-byte game
+
+# start the game at every boot, no PC needed. The ESP32 is removed, so its Wi-Fi boot script is parked in /root.
+# undo: adb shell "rm /etc/init.d/S99zcargame; mv /root/S98esp32wifi.disabled /etc/init.d/S98esp32wifi"
+autostart:
+	adb shell "[ ! -e /etc/init.d/S98esp32wifi ] || mv /etc/init.d/S98esp32wifi /root/S98esp32wifi.disabled"
+	adb push tools/S99zcargame /etc/init.d/S99zcargame
+	adb shell "chmod +x /etc/init.d/S99zcargame; sync"
 
 demo3d: src/demo3d.cpp src/engine3d.h src/objload.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ $< $(LIB)/ILI9341.cpp
@@ -30,4 +38,4 @@ test: src/test3d.cpp src/engine3d.h src/objload.h src/game.h
 
 clean:
 	rm -rf cargame demo3d test3d board
-.PHONY: all deploy test clean
+.PHONY: all deploy autostart test clean

@@ -51,6 +51,29 @@ Check visual changes on a `ppm` frame, and look at it, before you put them on th
   - Measure before and after any change to the renderer.
 - **Busy GPIO:** if you see "GPIO busy", or the timings jump, another `cargame` is still running. Ask the user before you kill it.
 
+## Board setup and the white screen (learned 2026-11-28)
+
+The board runs standalone: the ESP32 is **physically removed**, and the game starts itself at boot.
+
+- **Boot:** `make autostart` installs `/etc/init.d/S99zcargame`. That script frees SPI0, does the panel reset and starts `/root/cargame` detached. Its log is `/tmp/cargame.log`.
+  - `make autostart` also moves the stock `S98esp32wifi` to `/root/S98esp32wifi.disabled`. Its Wi-Fi driver grabs SPI0 and leaves the panel white. Don't put it back, and don't propose ESP32 or Wi-Fi fixes.
+- **Restart the game:** `adb shell "/etc/init.d/S99zcargame stop; setsid /etc/init.d/S99zcargame start"`, or reboot.
+  - Never use a plain `adb shell ./cargame &`. The game dies when that adb session ends, and the USB link drops often while the game runs.
+- **Deploy:** always use `make deploy`, which ends with `adb shell sync`. A power cut after an unsynced push once left `/root/cargame` at 0 bytes, so nothing started at boot.
+- **USB drops:** the adb link drops and comes back often. Check `uptime` before you say "the board rebooted".
+- **SPI speed:** keep `board::hz` (40 MHz). The game shows the menu and races at about 23.5 fps with it.
+  - Don't lower it because of a white screen. On 2026-11-28 the panel was white at 40, 30, 20, 15, 10 *and* 1 MHz, and then worked at 40 MHz again. Speed was never the cause.
+- **The status log:** the menu writes `menu: press L/R/M card N ...`. A race prints fps, render time, speed and `btn L/M/R/-` every 2 s. The end of a race prints `race over: back to the menu`.
+
+**When the user says the panel is white, follow these steps in order. Don't change code until step 4 passes.**
+1. Is it running? `adb shell "uptime; pidof cargame; cat /tmp/cargame.log; md5sum /root/cargame"`, then compare the checksum with `md5sum board/cargame`. A missing PID, no `READY` in the log or a 0-byte binary means the game isn't running at all: run `make deploy` and restart it as above.
+2. Is SPI free? `ls /dev/spidev0.0` must exist, and `lsmod` must not list `esp32_spi`.
+3. Are the frames going out? `grep spi /proc/interrupts`, twice, a few seconds apart. The `ff500000.spi` count must rise.
+4. **Panel test without the game:** stop the game, then build and run the library's `lib/ili9341/examples/basic.cpp` with `$(CROSS)` and the same flags as `board/cargame`. It draws a black screen with red and green bars. Ask the user what the panel shows.
+   - **Bars:** the panel works. Start the game again (restart as above) and ask again.
+   - **White:** it's hardware. Ask the user to reseat the display wires (VCC, GND, SCK, MOSI, D/C GPIO1_C4, CS GPIO1_D1, RESET GPIO1_C6) and power-cycle the board. Don't change any code.
+5. After each step, ask the user a concrete question about what the panel shows. Never write "fixed" until they confirm it.
+
 ## Rules
 
 - You cannot see the panel. Never claim a change "looks right" on the hardware. Say what you checked (tests, ppm frame, bench) and ask the user to confirm.

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Boot script: start the car game on the panel with no PC attached (installed by `make autostart`).
+# The ESP32 is removed and `make autostart` moves S98esp32wifi out of init.d (its driver grabs SPI0).
+# Free SPI0 exactly as tools/drive.py SETUP does, and run the game detached so it survives USB unplugging.
+LOG=/tmp/cargame.log
+setup() {
+	killall wpa_supplicant udhcpc 2>/dev/null
+	cd /sys/bus/spi
+	[ -e drivers/esp_spi/spi0.0 ] && echo spi0.0 > drivers/esp_spi/unbind
+	rmmod esp32_spi 2>/dev/null; rmmod cfg80211 2>/dev/null
+	if [ ! -e /dev/spidev0.0 ]; then
+		echo spidev > devices/spi0.0/driver_override
+		echo spi0.0 > drivers/spidev/bind
+	fi
+	for g in 53 54 56; do [ -d /sys/class/gpio/gpio$g ] || echo $g > /sys/class/gpio/export; done
+	echo low > /sys/class/gpio/gpio56/direction
+	echo high > /sys/class/gpio/gpio53/direction
+	echo low > /sys/class/gpio/gpio54/direction
+	sleep 0.1
+	echo 1 > /sys/class/gpio/gpio54/value
+	sleep 0.2
+}
+run() {
+	setup
+	sleep 1
+	setup                                  # second pass: a manual restart (which always worked) runs setup on a set-up board
+	echo "setup done: spidev $([ -e /dev/spidev0.0 ] && echo ok), esp32 reset $(cat /sys/class/gpio/gpio56/value)"
+	cd /root && exec ./cargame < /dev/null
+}
+case "$1" in
+	start) ( run ) > $LOG 2>&1 & ;;
+	stop) killall cargame 2>/dev/null ;;
+	*) exit 1 ;;
+esac
