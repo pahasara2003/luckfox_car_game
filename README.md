@@ -88,7 +88,18 @@ Run `python3 tools/drive.py` and keep its window focused. The keyboard works alo
 
 ## Wiring
 
-Pin numbers are the board's physical side pads, 1 to 24.
+Pin numbers are the board's physical side pads, 1 to 22 (11 on each side).
+
+![Wiring diagram: Luckfox Pico Mini B, ILI9341 display and three buttons with 10 kΩ pull-ups](docs/pinmap.png)
+
+The diagram shows the optional 10 kΩ pull-ups fitted. To change it, edit `tools/pinmap.py` (or open `docs/pinmap.drawio` in draw.io), then regenerate:
+
+```sh
+python3 tools/pinmap.py
+cli-anything-drawio --project docs/pinmap.drawio export render docs/pinmap.png -f png --scale 1.5 --overwrite
+```
+
+Exporting the PNG needs the draw.io desktop app installed.
 
 ### Display
 
@@ -170,6 +181,7 @@ The buildings, bridge and water are made in code from a few hundred flat-coloure
 | `tools/drive.py` | PC keyboard controller and board setup |
 | `tools/S99zcargame` | Boot script that starts the game without a PC (`make autostart`) |
 | `tools/mkfont.py` | Generates the HUD font header |
+| `tools/pinmap.py` | Generates the wiring diagram `docs/pinmap.drawio` |
 | `assets/cars/` | Car models from Kenney's [Car Kit](https://kenney.nl/assets/car-kit) |
 
 ## Credits
